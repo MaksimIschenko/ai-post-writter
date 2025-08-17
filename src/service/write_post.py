@@ -23,6 +23,46 @@ from src.service.import_post import load_corpus
 from src.utils import ensure_dirs
 
 
+def _try_parse_json(s: str) -> dict[str, Any] | None:
+    """Пытается распарсить JSON из строки:
+    1) снимает ```/```json ограждения,
+    2) пробует целиком,
+    3) вырезает самый широкий блок от первой { до последней }.
+    """
+    if not s:
+        return None
+
+    # Снять кодовые ограждения
+    s = s.strip()
+    s = re.sub(r"^\s*```(?:json)?\s*", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\s*```\s*$", "", s)
+
+    # 1) прямая попытка
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+
+    # 2) вырезать «самый широкий» блок { ... }
+    start = s.find("{")
+    end = s.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = s[start : end + 1]
+        try:
+            return json.loads(candidate)
+        except Exception:
+            pass
+
+    # 3) ещё одна попытка по «жадному» регексу (иногда полезно)
+    m = re.search(r"\{[\s\S]*\}", s)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except Exception:
+            pass
+
+    return None
+
 class LLMBackend:
     """Бэкенд для работы с LLM."""
 
@@ -34,53 +74,52 @@ class LLMBackend:
         """
         self.cfg = cfg
 
-    # Chat with JSON-mode helper
     def chat_json(self, system_prompt: str, user_prompt: str, schema_hint: str | None = None) -> dict[str, Any]:
-        """Спрашивает модель в формате JSON.
-
-        Ask model to return JSON. We'll try to parse; if it fails, we retry once.
-        `schema_hint` is a short string included in the prompt to improve format compliance.
-
-        :param system_prompt: Системный промпт.
-        :type system_prompt: str
-        :param user_prompt: Пользовательский промпт.
-        :type user_prompt: str
-        :param schema_hint: Подсказка формата.
-        :type schema_hint: str | None
-        :return: Ответ модели.
-        :rtype: dict[str, Any]
-        """
+        """Запрос к LLM с требованием вернуть JSON."""
         sp = system_prompt.strip()
         up = textwrap.dedent(
             f"""
             {user_prompt.strip()}
 
-            ТРЕБОВАНИЕ ФОРМАТА: ответь **строго** в JSON без каких-либо префиксов, суффиксов или комментариев.
+            ВАЖНО: верни СТРОГО корректный JSON без комментариев, преамбул и пояснений.
             {schema_hint or ''}
             """
         ).strip()
+
         messages = [
             {"role": "system", "content": sp},
             {"role": "user", "content": up},
         ]
-        resp = ollama.chat(model=self.cfg.chat_model, messages=messages, options={"temperature": self.cfg.temperature})
+
+        # 1) Первая попытка — сразу просим JSON-режим
+        resp = ollama.chat(
+            model=self.cfg.chat_model,
+            messages=messages,
+            options={"temperature": self.cfg.temperature, "format": "json"},
+        )
         text = resp["message"]["content"].strip()
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            # Try to extract JSON between braces
-            m = re.search(r"\{[\s\S]*\}$", text)
-            if m:
-                try:
-                    return json.loads(m.group(0))
-                except Exception:  # noqa: BLE001
-                    pass
-            # one retry with stronger instruction
-            messages.append({"role": "assistant", "content": text})
-            messages.append({"role": "user", "content": "Повтори ответ СТРОГО как корректный JSON."})
-            resp2 = ollama.chat(model=self.cfg.chat_model, messages=messages, options={"temperature": 0})
-            text2 = resp2["message"]["content"].strip()
-            return json.loads(re.search(r"\{[\s\S]*\}$", text2).group(0))  # type: ignore[arg-type]
+        parsed = _try_parse_json(text)
+        if parsed is not None:
+            return parsed
+
+        # 2) Ретрай — максимально «строго»
+        retry_messages = messages + [
+            {"role": "assistant", "content": text},
+            {"role": "user", "content": "Повтори ответ СТРОГО как корректный JSON. Только JSON, без пояснений."},
+        ]
+        resp2 = ollama.chat(
+            model=self.cfg.chat_model,
+            messages=retry_messages,
+            options={"temperature": 0, "format": "json"},
+        )
+        text2 = resp2["message"]["content"].strip()
+        parsed2 = _try_parse_json(text2)
+        if parsed2 is not None:
+            return parsed2
+
+        # 3) Чёткая ошибка (без .group на None)
+        snippet = (text2 or text)[:600].replace("\n", "\\n")
+        raise ValueError(f"LLM не вернул корректный JSON. Фрагмент ответа: {snippet}")
 
     def chat_text(self, system_prompt: str, user_prompt: str) -> str:
         """Спрашивает модель в текстовом формате.
@@ -100,19 +139,21 @@ class LLMBackend:
         return resp["message"]["content"].strip()
 
     def embed(self, texts: list[str]) -> np.ndarray:
-        """Вычисляет embedding для текстов.
+        """Вычисляет embedding для текстов (через Ollama, по одному запросу на текст)."""
+        vectors: list[list[float]] = []
 
-        :param texts: Тексты.
-        :type texts: list[str]
-        :return: Embedding.
-        :rtype: np.ndarray
-        """
-        # Ollama embeddings: returns dict with 'embeddings': [[...], ...]
-        res = ollama.embeddings(model=self.cfg.embed_model, input=texts)
-        arr = np.array(res["embeddings"], dtype=np.float32)
-        # normalize rows
+        for t in texts:
+            tt = t if isinstance(t, str) and t.strip() else " "  # защита от пустых строк
+            res = ollama.embeddings(model=self.cfg.embed_model, prompt=tt)
+            vec = res.get("embedding")
+            if vec is None:
+                raise RuntimeError(f"Unexpected embeddings response: {res!r}")
+            vectors.append(vec)
+
+        arr = np.array(vectors, dtype=np.float32)
         norms = np.linalg.norm(arr, axis=1, keepdims=True) + 1e-9
         return arr / norms
+
 
 def top_k_similar(query: str, docs: list[str], backend: LLMBackend, k: int = 5) -> list[int]:
     """Находит k наиболее похожих текстов.
