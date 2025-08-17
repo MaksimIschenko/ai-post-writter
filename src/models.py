@@ -12,3 +12,10 @@ class ModelConfig:
     embed_model: str = DEFAULT_EMBED_MODEL
     max_context_tokens: int = 8000  # rough conservative default
     temperature: float = 0.7
+
+
+@dataclasses.dataclass
+class RetrievedStyle:
+    """Стиль поста."""
+    examples: list[str]
+    note: str  # short, LLM-derived style note

@@ -14,6 +14,7 @@ from config import (
 from src.models import ModelConfig
 from src.service.import_post import import_posts
 from src.service.setting_model import setting_model, show_settings
+from src.service.write_post import write_post
 from src.utils import ensure_dirs
 
 console = Console()
@@ -44,7 +45,7 @@ def run() -> None:
         choice = Prompt.ask("Выберите пункт", choices=["1", "2", "3", "4"], default="1")
 
         if choice == "1":
-            print("Написать пост")
+            write_post(cfg, console)
         elif choice == "2":
             import_posts(console)
         elif choice == "3":
