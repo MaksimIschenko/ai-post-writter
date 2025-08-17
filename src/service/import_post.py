@@ -1,4 +1,4 @@
-"""Импорт постов из Telegram.
+"""Модуль для импорта постов из Telegram.
 
 Для работы необходимо получить API ID и API hash в my.telegram.org
 и указать их в переменных окружения (файл .env) TELEGRAM_API_ID и TELEGRAM_API_HASH.

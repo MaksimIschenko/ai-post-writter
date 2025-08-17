@@ -11,8 +11,9 @@ from rich.table import Table
 from config import (
     APP_NAME,
 )
-from src.import_post import import_posts
 from src.models import ModelConfig
+from src.service.import_post import import_posts
+from src.service.setting_model import setting_model, show_settings
 from src.utils import ensure_dirs
 
 console = Console()
@@ -22,17 +23,6 @@ def show_header() -> None:
     """Показывает заголовок приложения."""
     console.rule(f"[bold cyan]{APP_NAME}[/bold cyan]")
 
-def show_settings(cfg: ModelConfig) -> None:
-    """Показывает текущие настройки."""
-    table = Table(title="Текущие настройки", box=box.SIMPLE)
-    table.add_column("Параметр", style="cyan", no_wrap=True)
-    table.add_column("Значение", style="white")
-    table.add_row("Chat model", cfg.chat_model)
-    table.add_row("Embed model", cfg.embed_model)
-    table.add_row("Температура", str(cfg.temperature))
-    table.add_row("Контекст токенов (примерно)", str(cfg.max_context_tokens))
-    console.print(table)
-
 # Точка входа
 @app.command()
 def run() -> None:
@@ -40,8 +30,7 @@ def run() -> None:
     cfg = ModelConfig()
     while True:
         show_header()
-        show_settings(cfg)
-        #console.print(Panel.fit("Hello, [bold]world[/]!", title=APP_NAME))
+        show_settings(cfg, console)
 
         table = Table(box=box.SIMPLE, title="Действия")
         table.add_column("#", justify="right")
@@ -59,7 +48,7 @@ def run() -> None:
         elif choice == "2":
             import_posts(console)
         elif choice == "3":
-            show_settings(cfg)
+            cfg = setting_model(cfg, console)
         elif choice == "4":
             break
         time.sleep(5)
