@@ -1,0 +1,47 @@
+[project]
+name = "ai-post-writter"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = "==3.12.*"
+dependencies = [
+    "numpy>=2.3.2",
+    "ollama>=0.5.3",
+    "rich>=14.1.0",
+    "telethon>=1.40.0",
+    "tiktoken>=0.11.0",
+    "typer[all]>=0.16.0",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.17.1",
+    "ruff>=0.12.9",
+]
+
+[tool.ruff]
+# включаем базовые правила + isort + pyupgrade
+select = ["E", "F", "W", "I", "UP", "N"]
+ignore = ["E203"]                           # совместимость с Black-стилем, если будешь использовать
+line-length = 100
+target-version = "py312"
+exclude = [".venv", ".uv", "build", "dist", ".git"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ruff.lint.isort]
+known-first-party = ["myproject"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = ["src"]
+packages = ["myproject"]
+strict = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unreachable = true
+show_error_codes = true
+pretty = true
+exclude = '(^\.venv|^\.uv|^build|^dist|^\.git)'
